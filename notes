@@ -1,0 +1,293 @@
+### basic
+#echo "nameserver 1.1.1.1" > /etc/resolv.conf ; apt install haveged net-tools curl
+
+
+### SSH, key, iptables
+
+#ssh-keygen
+#ssh-copy-id root@bsa.com -i .ssh/id_rsa.pub
+#ssh root@bsa.com -i .ssh/id_rsa
+
+/etc/ssh/sshd_config:
+
+Port 333
+PubkeyAuthentication yes
+PasswordAuthentication no
+
+#systemctl restart sshd.service
+#ssh root@bsa.com -i .ssh/id_rsa -p 333
+
+#iptables -nvL
+#iptables -F 
+#iptables -A INPUT -s  147.228.0.0/16  -p tcp --dport 333 -j ACCEPT
+#iptables -A INPUT -p tcp --dport 333  -j DROP
+
+#iptables-save > /etc/network/iptables
+#crontab -e @iptables-restore /etc/network/iptables
+
+### CA
+
+#apt install easy-rsa ca-certificates
+#cp -r /usr/share/easy-rsa /etc/CA
+#cd /etc/CA
+#source vars
+#./clean-all
+#ln -s openssl-1.0.0.cnf openssl.cnf (debian 9)
+#./build-ca bsa_ca
+#mkdir /usr/local/share/ca-certificates
+#cp keys/ca.crt /usr/local/share/ca-certificates/ca-bsa.crt
+#update-ca-certificates
+
+### apache2 (2 x vhost) + stunnel (s1) + nginx ssl proxy (s1 a s2)
+
+#ip a add 192.168.30.1/24 dev eth1
+#ip a add 192.168.40.1/24 dev eth1
+
+#modprobe 8021q
+#ip link add link eth0 name eth0.50 type vlan id 50
+#ip link set eth1.50 up
+#ip a add 192.168.50.1/24 dev eth1.50
+
+#apt install apache2
+#a2dissite 000-default.conf
+#mkdir /var/www/server1 /var/www/server2
+
+/etc/apache2/ports.conf:
+
+Listen 192.168.30.1:8030
+Listen 192.168.40.1:8040
+
+#cd /etc/apache2/sites-available/
+#cp 000-default.conf server1.conf
+#cp 000-default.conf server2.conf
+
+/etc/apache2/sites-avaible/server1.conf:
+
+<VirtualHost 192.168.30.1:8030>
+	ServerName server1.bsa
+	DocumentRoot /var/www/server1
+
+#echo "server1" > /var/www/server1/index.html
+#echo "server2" > /var/www/server2/index.html
+#a2ensite server1.conf
+#a2ensite server2.conf
+#systemctl restart apache2
+
+### stunnel
+
+#apt-get install stunnel
+
+!!! nefunguje !!!
+#cd /etc/CA
+#source vars
+#./build-key-server server.bsa
+#cat keys/ca.crt keys/server.bsa.crt > /etc/stunnel/server.bsa.pem
+#cp keys/server.bsa.key /etc/stunnel/
+
+!!! funguje !!!
+
+#openssl genrsa -out key.pem 2048
+#openssl req -new -x509 -key key.pem -out cert.pem -days 1095
+#cat key.pem cert.pem >> /etc/stunnel/stunnel.pem
+
+/etc/default/stunnel4:
+ENABLED = 1
+
+#cp /usr/share/doc/stunnel4/examples/stunnel.conf-sample /etc/stunnel/stunnel.conf
+
+/etc/stunnel/stunnel.conf:
+- smazat [gmail*]
+;[https]
+accept = 192.168.50.1:443
+connect = 192.168.30.1:8030
+cert = /etc/stunnel/stunnel.pem
+
+#systemctl start stunnel4
+
+### nginx
+
+#apt install nginx
+- v případě, že je potřeba udělat simlink
+#ln -s /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
+#cat key.pem cert.pem >> /etc/nginx/nginx.pem
+
+/etc/sites-available/default:
+
+server {
+        listen 192.168.50.1:444;
+        server_name server1;
+        ssl    on;
+        ssl_certificate    /etc/nginx/nginx.pem;
+        ssl_certificate_key    /etc/nginx/nginx.pem;
+        location / {
+                proxy_pass http://192.168.30.1:8030;
+        }
+}
+
+server {
+        listen 192.168.50.1:445;
+        server_name server2;
+        ssl    on;
+        ssl_certificate    /etc/nginx/nginx.pem;
+        ssl_certificate_key    /etc/nginx/nginx.pem;
+        location / {
+                proxy_pass http://192.168.40.1:8040;
+        }
+}
+
+
+#openssl s_client -connect 192.168.50.1:443
+#curl https://192.168.50.1:443 -k
+
+### lvm2, cryptsetup
+
+#apt install lvm2 cryptsetup
+
+#fallocate -l 100M disk1.img
+#fallocate -l 100M disk2.img
+#losetup /dev/loop1 disk1.img
+#losetup /dev/loop2 disk2.img
+
+#pvcreate /dev/loop1 /dev/loop2
+#vgcreate group /dev/loop1 /dev/loop2
+#lvcreate -L 150M -n volume group
+#cryptsetup -y -v luksFormat /dev/group/volume
+#cryptsetup luksOpen /dev/group/volume crypted
+#mkfs.ext4 /dev/mapper/crypted
+
+#mkdir /srv
+#mount /dev/mapper/crypted /srv
+
+#umount /srv
+#cryptsetup -v luksClose /dev/mapper/crypted
+
+#cryptsetup luksDump /dev/group/volume | grep "UUID"
+
+/etc/crypttab: (/root/keys s klicem)
+crypted /dev/mapper/group-volume /root/keys luks
+
+#cryptdisks_start crypted
+
+/etc/fstab:
+/dev/mapper/crypted /srv ext4    defaults   0       2
+
+#mount -a (po LuksOpen, mělo by zařídit systemd)
+
+### PostgreSQL (bsa uživatel z localu a remote md5 z adresy 10.0.1.0/24)
+
+#apt install postgresql postgresql-contrib
+Změna portu (/etc/postgresql/main/9.6/postgresl.conf)
+nebo listen_addresses = 127.0.0.1,10.255.255.1
+
+#su postgres
+#cd
+#createuser bsa
+#createdb db
+
+#psql
+\conninfo (info o připojení)
+\l (zobrazí databáze)
+\c db (připojí do databáze)
+\dt (zobrazí tabulky)
+\d tabulka (sloupečky tabulky)
+
+>CREATE USER bsa WITH PASSWORD 'heslo';
+>CREATE DATABASE db WITH OWNER=bsa;
+>GRANT ALL PRIVILEGES ON DATABASE db to bsa;
+
+/etc/postgresql/9.6/main/pg_hba.conf:
+local db bsa peer
+host db bsa 10.0.1.0/24 md5
+
+#useradd bsa
+#su bsa
+#psql db
+
+>\c db
+>create table tabulka(id SERIAL PRIMARY KEY, ts TIMESTAMP, value INT, date date);
+>\d tabulka
+>INSERT INTO tabulka (value, date) VALUES (13,now());
+
+### GPG zálohy psql (změnit pg_hba.conf postgres na trust)
+
+#psql -U postgres
+
+#apt install haveged
+#gpg --full-generate-key (bez passphrase)
+#gpg --list-keys
+#gpg --output doc.sig --sign doc
+#gpg --verify doc.sig doc
+#gpg --output kek.txt.gpg --encrypt --recipient postgres myfile.txt
+#gpg --output kekerony.txt --decrypt kek.txt.gpg
+
+backup.sh:
+
+#!/bin/bash
+today=`date '+%Y_%m_%d__%H_%M_%S'`;
+pg_dump -U postgres db | gzip > "/root/$today.sql.db.gz"
+gpg --output "/root/$today.sql.db.gz.sig" --sign "/root/$today.sql.db.gz"
+gpg --verify "/root/$today.sql.db.gz.sig" "/root/$today.sql.db.gz"
+
+### OpenVPN	PSK
+
+apt install openvpn
+#cd /etc/openvpn
+#wget https://raw.githubusercontent.com/jindrichskupa/kiv-bsa/master/cv05-openvpn/bsa-server-psk.conf
+
+bsa-server-psk.conf:
+remote 147.228.67.5X
+(ifconfig opačně na dvou stranách)
+
+#openvpn --genkey --secret bsa-server-psk.key (obě strany)
+#iptables -A INPUT -s 147.228.0.0/16 -p tcp --dport 1194 -j ACCEPT
+#service openvpn@bsa-server-psk start
+#service openvpn@bsa-server-psk status
+
+
+### Bind9
+
+#apt-get install bind9 dnsutils
+
+/etc/bind/named.conf.options:
+
+forwarders {
+                1.1.1.1;
+            };
+
+/etc/resolv.conf:
+nameserver 127.0.0.1
+
+#host www.seznam.cz
+
+/etc/bind9/secure.bsa:
+
+$TTL    604800
+@       IN      SOA     secure.bsa. secure.bsa. (
+                              2         ; Serial
+                         604800         ; Refresh
+                          86400         ; Retry
+                        2419200         ; Expire
+                         604800 )       ; Negative Cache TTL
+;
+@       IN      NS      localhost.
+@       IN      A       147.228.67.160
+
+/etc/bind/named.conf.local:
+zone "secure.bsa." in {
+    type master;
+    file "secure.bsa";
+    inline-signing yes;
+    auto-dnssec maintain;
+    key-directory "/etc/bind/keys";
+};
+
+#ln -s /etc/bind/secure.bsa /var/cache/bind/secure.bsa
+
+#mkdir /etc/bind/keys
+#cd /etc/bind/keys
+#dnssec-keygen -a ECDSAP256SHA256 -fK secure.bsa
+#chmod g+r K*.private
+#rndc signing -list secure.bsa
+
+#dig @127.0.0.1 secure.bsa +dnssec
+
