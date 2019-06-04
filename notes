@@ -291,3 +291,9 @@ zone "secure.bsa." in {
 
 #dig @127.0.0.1 secure.bsa +dnssec
 
+### rsyslog
+apt install rsyslog
+
+/etc/rsyslog.conf:
+*.*	@147.228.67.152
+
